@@ -1,0 +1,61 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-seatrush}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seatrush}
+      POSTGRES_DB: ${POSTGRES_DB:-seatrush}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-seatrush}:${POSTGRES_PASSWORD:-seatrush}@db:5432/${POSTGRES_DB:-seatrush}
+      HOLD_TTL_SECONDS: ${HOLD_TTL_SECONDS:-300}
+      MAX_SEATS_PER_USER: ${MAX_SEATS_PER_USER:-4}
+      LONE_SEAT_RULE: ${LONE_SEAT_RULE:-false}
+      SWEEPER_ENABLED: ${SWEEPER_ENABLED:-true}
+      SEED_DEMO: "true"
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:3000
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+  test:
+    profiles: ["test"]
+    build: ./backend
+    environment:
+      DATABASE_URL: postgres://seatrush:seatrush@db:5432/seatrush_test
+      HOLD_TTL_SECONDS: "300"
+      MAX_SEATS_PER_USER: "4"
+      LONE_SEAT_RULE: "false"
+      SWEEPER_ENABLED: "false"
+      SEED_DEMO: "false"
+      WRITE_POOL_MAX: "50"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: npm test
+
+volumes:
+  pgdata:
