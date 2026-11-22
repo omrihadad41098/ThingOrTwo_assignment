@@ -1,7 +1,8 @@
-import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Param, Post } from '@nestjs/common';
 import { ApiBody, ApiOkResponse, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Fan } from '../common/fan';
 import { requireUuid } from '../common/ids';
+import { ApiErrors, busy, fanRequired, holdForbidden, holdMissing } from '../common/openapi';
 import { CheckoutService, checkoutBodySchema } from './checkout.service';
 
 @ApiTags('checkout')
@@ -13,12 +14,33 @@ export class CheckoutController {
   @Post(':id/checkout')
   @HttpCode(200)
   @ApiBody({
+    required: false,
     schema: {
       type: 'object',
-      properties: { promoCode: { type: 'string', example: 'SAVE10' } },
+      properties: {
+        promoCode: {
+          type: 'string',
+          example: 'SAVE10',
+          description: 'Optional. SAVE10 or WELCOME20. Omit the field to pay full price.',
+        },
+      },
     },
   })
   @ApiOkResponse({ description: 'Order, replayed with the same id when one already exists.' })
+  @ApiErrors(
+    ...fanRequired,
+    holdMissing,
+    holdForbidden,
+    { status: 409, code: 'HOLD_CLOSED', message: 'This hold was released.' },
+    {
+      status: 409,
+      code: 'HOLD_EXPIRED',
+      message: 'Your hold has expired. These seats are back on sale.',
+    },
+    { status: 409, code: 'PROMO_INVALID', message: "That coupon code isn't valid." },
+    { status: 409, code: 'PROMO_USED', message: 'WELCOME20 can only be used once.' },
+    busy,
+  )
   buy(
     @Param('id') id: string,
     @Fan(true) username: string,

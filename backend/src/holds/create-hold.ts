@@ -34,7 +34,6 @@ export async function createHoldOnSeats(
     ttlSeconds: number;
     maxSeats: number;
     lockMode: 'wait' | 'nowait';
-    loneSeatRule?: boolean;
   },
 ): Promise<CreatedHold> {
   const seats = [...input.seats].sort(compareSeats);
@@ -64,24 +63,18 @@ export async function createHoldOnSeats(
 
   const locked: { seat: SeatKey; row: LockedSeat | null }[] = [];
   const rowPicture = new Map<number, (LockedSeat | null)[]>();
-  if (input.loneSeatRule) {
-    const seatsPerRow = Number(event.rows[0].seats_per_row);
-    const rowIndexes = [...new Set(seats.map((seat) => seat.rowIndex))].sort((a, b) => a - b);
-    for (const rowIndex of rowIndexes) {
-      const picture: (LockedSeat | null)[] = [];
-      for (let number = 1; number <= seatsPerRow; number++) {
-        picture.push(await lockSeat(client, input, seatKey(rowIndex, number)));
-      }
-      rowPicture.set(rowIndex, picture);
+  const seatsPerRow = Number(event.rows[0].seats_per_row);
+  const rowIndexes = [...new Set(seats.map((seat) => seat.rowIndex))].sort((a, b) => a - b);
+  for (const rowIndex of rowIndexes) {
+    const picture: (LockedSeat | null)[] = [];
+    for (let number = 1; number <= seatsPerRow; number++) {
+      picture.push(await lockSeat(client, input, seatKey(rowIndex, number)));
     }
-    for (const seat of seats) {
-      const picture = rowPicture.get(seat.rowIndex) ?? [];
-      locked.push({ seat, row: picture[seat.seatNumber - 1] ?? null });
-    }
-  } else {
-    for (const seat of seats) {
-      locked.push({ seat, row: await lockSeat(client, input, seat) });
-    }
+    rowPicture.set(rowIndex, picture);
+  }
+  for (const seat of seats) {
+    const picture = rowPicture.get(seat.rowIndex) ?? [];
+    locked.push({ seat, row: picture[seat.seatNumber - 1] ?? null });
   }
 
   const problems: SeatProblem[] = [];
@@ -90,7 +83,7 @@ export async function createHoldOnSeats(
     if (reason) problems.push({ id: item.seat.id, reason });
   }
   if (problems.length) throw seatConflict(problems, seats.length);
-  if (input.loneSeatRule) assertNoNewLoneSeat(seats, rowPicture);
+  assertNoNewLoneSeat(seats, rowPicture);
 
   const inserted = await client.query<{ id: string; expires_at: Date; server_now: Date }>(
     `INSERT INTO holds (event_id, user_id, status, expires_at)

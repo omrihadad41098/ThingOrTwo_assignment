@@ -36,7 +36,6 @@ export function Tickets() {
 
   return (
     <section>
-      <p className="eyebrow">Your night</p>
       <h1>My tickets</h1>
       {error ? <p className="error">{error}</p> : null}
       {empty ? <p>You don't have tickets yet.</p> : null}

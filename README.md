@@ -67,7 +67,6 @@ That command migrates `seatrush_test`, does not seed the demo there, and runs th
 | --- | --- | --- |
 | `HOLD_TTL_SECONDS` | 300 | How long a hold stays live |
 | `MAX_SEATS_PER_USER` | 4 | Seats one fan may hold or buy for one show |
-| `LONE_SEAT_RULE` | false | When true, every hold uses the single-seat rule. The OneSeatMode button can turn that rule on for one tab without this flag |
 | `SWEEPER_ENABLED` | true | Tidies stale held rows. Correctness does not depend on it |
 
 `HOLD_TTL_SECONDS` and `MAX_SEATS_PER_USER` must be integers of 1 or more. Anything else stops the process before it listens.
@@ -78,7 +77,7 @@ The API identifies a fan by the `X-Fan-Username` header. The web app stores the 
 
 ## On the seat page
 
-Hold these seats, then Checkout or Cancel. Cancel releases the hold and the seats go back on sale. A coupon field accepts `SAVE10` (10 percent, half up to the nearest agora) and `WELCOME20` (20 shekels, once per fan). OneSeatMode, on that page, refuses a hold that would leave one empty seat stuck on its own. Admin at http://localhost:5173/admin creates a show: name, the moment tickets go on sale, the show time, how many rows, how many seats in each row, and a price in shekels for each run of rows. That form calls `POST /events`, which writes the event, the zones, and every seat. The same page lists shows and can remove one after a confirm step, which deletes that show's seats, holds, and orders. It also lists fans and can delete one after a confirm step. Deleting a fan removes their holds and orders and returns those seats to sale. There is no password on that page.
+Hold these seats, then Checkout or Cancel. Cancel releases the hold and the seats go back on sale. A coupon field accepts `SAVE10` (10 percent, half up to the nearest agora) and `WELCOME20` (20 shekels, once per fan). A hold that would leave one empty seat stuck on its own is refused, on the seat map and on the API, and that check cannot be turned off. Admin at http://localhost:5173/admin creates a show: name, the moment tickets go on sale, the show time, how many rows, how many seats in each row, and a price in shekels for each run of rows. That form calls `POST /events`, which writes the event, the zones, and every seat. The same page lists shows and can remove one after a confirm step, which deletes that show's seats, holds, and orders. It also lists fans and can delete one after a confirm step. Deleting a fan removes their holds and orders and returns those seats to sale. There is no password on that page.
 
 ## What this build does not do
 

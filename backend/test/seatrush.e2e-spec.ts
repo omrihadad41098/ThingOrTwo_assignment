@@ -142,10 +142,10 @@ describe('SeatRush', () => {
     expect(tooMany.body.message).toBe(
       'You can only hold 4 seats for this show, and you already have 1.',
     );
-    expect((await hold(event.id, 'ada', ['A1', 'A2', 'A3'])).status).toBe(201);
+    expect((await hold(event.id, 'ada', ['A6', 'A7', 'A8'])).status).toBe(201);
 
-    const parallel = await createShow();
-    const seats = ['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8'];
+    const parallel = await createShow({ rows: 8, seats: 4 });
+    const seats = ['A1', 'B1', 'C1', 'D1', 'E1', 'F1', 'G1', 'H1'];
     const results = await Promise.all(seats.map((seat) => hold(parallel.id, 'ada', [seat])));
     expect(results.filter((result) => result.status === 201)).toHaveLength(4);
     const limited = results.filter((result) => result.body.code === 'LIMIT_EXCEEDED');
@@ -216,7 +216,7 @@ describe('SeatRush', () => {
     expect((await release(live.body.id, 'ada')).status).toBe(200);
   });
 
-  it('returns B2-B3 for the worked room and writes nothing when no block exists', async () => {
+  it('returns C4-C5 for the worked room and writes nothing when no block exists', async () => {
     const event = await createShow({ rows: 3, seats: 8, price: 10000 });
     const buyers = [
       ['ada', ['A1', 'A2', 'A3', 'A4']],
@@ -233,14 +233,21 @@ describe('SeatRush', () => {
       .set('X-Fan-Username', 'dee')
       .send({ bestAvailable: { count: 2 } });
     expect(best.status).toBe(201);
-    expect(best.body.seatIds).toEqual(['B2', 'B3']);
-    expect(statusOf(await mapOf(event.id), 'B2')).toBe('held');
-    expect(statusOf(await mapOf(event.id), 'B3')).toBe('held');
+    expect(best.body.seatIds).toEqual(['C4', 'C5']);
+    expect(statusOf(await mapOf(event.id), 'C4')).toBe('held');
+    expect(statusOf(await mapOf(event.id), 'C5')).toBe('held');
+    expect(statusOf(await mapOf(event.id), 'B2')).toBe('available');
 
     const broken = await createShow({ rows: 1, seats: 8 });
-    for (const seat of ['A1', 'A3', 'A5', 'A7']) {
-      const created = await hold(broken.id, 'ada', [seat]);
-      expect((await checkout(created.body.id, 'ada')).status).toBe(200);
+    const pairs = [
+      ['ada', ['A1', 'A2']],
+      ['bea', ['A3', 'A4']],
+      ['cy', ['A5', 'A6']],
+      ['dee', ['A7', 'A8']],
+    ] as const;
+    for (const [fan, pair] of pairs) {
+      const created = await hold(broken.id, fan, [...pair]);
+      expect((await checkout(created.body.id, fan)).status).toBe(200);
     }
     const before = await pool.query('SELECT count(*) FROM holds');
     const none = await request(app.getHttpServer())
@@ -286,7 +293,7 @@ describe('SeatRush', () => {
   });
 
   it('applies SAVE10 and WELCOME20, and leaves the hold when the code is bad', async () => {
-    const event = await createShow({ price: 34935, seats: 4 });
+    const event = await createShow({ price: 34935, seats: 6 });
     const save = await hold(event.id, 'ada', ['A1']);
     const saved = await checkout(save.body.id, 'ada', 'save10');
     expect(saved.status).toBe(200);
@@ -301,7 +308,7 @@ describe('SeatRush', () => {
     expect(firstWelcome.body.discountAgorot).toBe(2000);
     expect(firstWelcome.body.totalAgorot).toBe(32935);
 
-    const other = await createShow({ price: 34935, seats: 2 });
+    const other = await createShow({ price: 34935, seats: 4 });
     const again = await hold(other.id, 'ada', ['A1']);
     const reused = await checkout(again.body.id, 'ada', 'WELCOME20');
     expect(reused.status).toBe(409);
@@ -318,7 +325,7 @@ describe('SeatRush', () => {
     expect((await checkout(badHold.body.id, 'bea', '   ')).body.discountAgorot).toBe(0);
   });
 
-  it('applies the lone-seat rule only when OneSeatMode is on', async () => {
+  it('always applies the lone-seat rule, including when the body tries to turn it off', async () => {
     const event = await createShow({ rows: 3, seats: 8, price: 10000 });
     const buyers = [
       ['ada', ['A1', 'A2', 'A3', 'A4']],
@@ -332,7 +339,7 @@ describe('SeatRush', () => {
     const blocked = await request(app.getHttpServer())
       .post(`/events/${event.id}/holds`)
       .set('X-Fan-Username', 'dee')
-      .send({ seatIds: ['B2', 'B3'], oneSeatMode: true });
+      .send({ seatIds: ['B2', 'B3'] });
     expect(blocked.status).toBe(409);
     expect(blocked.body.code).toBe('LONE_SEAT');
     expect(blocked.body.message).toBe(
@@ -340,22 +347,25 @@ describe('SeatRush', () => {
     );
     expect(statusOf(await mapOf(event.id), 'B2')).toBe('available');
 
+    const ignored = await request(app.getHttpServer())
+      .post(`/events/${event.id}/holds`)
+      .set('X-Fan-Username', 'dee')
+      .send({ seatIds: ['B2', 'B3'], oneSeatMode: false });
+    expect(ignored.status).toBe(409);
+    expect(ignored.body.code).toBe('LONE_SEAT');
+    expect(statusOf(await mapOf(event.id), 'B2')).toBe('available');
+
     const best = await request(app.getHttpServer())
       .post(`/events/${event.id}/holds`)
       .set('X-Fan-Username', 'dee')
-      .send({ bestAvailable: { count: 2 }, oneSeatMode: true });
+      .send({ bestAvailable: { count: 2 } });
     expect(best.status).toBe(201);
     expect(best.body.seatIds).toEqual(['C4', 'C5']);
 
     const quiet = await createShow({ seats: 8 });
-    const sold = await hold(quiet.id, 'ada', ['A2']);
-    expect((await checkout(sold.body.id, 'ada')).status).toBe(200);
-    const later = await request(app.getHttpServer())
-      .post(`/events/${quiet.id}/holds`)
-      .set('X-Fan-Username', 'bea')
-      .send({ seatIds: ['A8'], oneSeatMode: true });
-    expect(later.status).toBe(201);
-    expect(later.body.seatIds).toEqual(['A8']);
+    const edge = await hold(quiet.id, 'bea', ['A8']);
+    expect(edge.status).toBe(201);
+    expect(edge.body.seatIds).toEqual(['A8']);
   });
 
   it('deletes a fan and returns their seats to sale', async () => {

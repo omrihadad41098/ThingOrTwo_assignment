@@ -2,7 +2,6 @@ export type Env = {
   databaseUrl: string;
   holdTtlSeconds: number;
   maxSeatsPerUser: number;
-  loneSeatRule: boolean;
   sweeperEnabled: boolean;
   seedDemo: boolean;
   port: number;
@@ -19,7 +18,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     databaseUrl,
     holdTtlSeconds: positiveInt(source.HOLD_TTL_SECONDS, 'HOLD_TTL_SECONDS'),
     maxSeatsPerUser: positiveInt(source.MAX_SEATS_PER_USER, 'MAX_SEATS_PER_USER'),
-    loneSeatRule: source.LONE_SEAT_RULE === 'true',
     sweeperEnabled: source.SWEEPER_ENABLED !== 'false',
     seedDemo: source.SEED_DEMO !== 'false',
     port: source.PORT ? positiveInt(source.PORT, 'PORT') : 3000,

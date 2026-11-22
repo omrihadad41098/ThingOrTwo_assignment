@@ -120,8 +120,6 @@ input, select {
   border-radius: 10px;
   padding: 0.55rem 0.7rem;
 }
-button.mode.on { background: #f3ecdf; }
-.hint { color: rgba(243, 236, 223, 0.72); font-size: 0.92rem; }
 .admin { max-width: 52rem; }
 .show-form, .show-form label { display: grid; gap: 0.35rem; }
 .show-form { gap: 0.85rem; margin-bottom: 2.5rem; }
@@ -171,9 +169,28 @@ input[type="datetime-local"] { color-scheme: dark; }
 .seat.stalls.available { background: #e07a3d; color: #1b140c; }
 .seat.circle.available { background: #2f6f5e; }
 .seat.balcony.available { background: #3d4f8a; }
-.seat.held { background: #6b5a3e; }
+.seat.selected { background: #f4d35e; color: #1b140c; outline: 2px solid #fff4c8; outline-offset: 2px; }
+.seat.mine { background: #3ddc97; color: #10281c; }
+.seat.held { background: #5c6b7a; color: #d5dde6; }
 .seat.sold { background: #2a261f; color: rgba(243, 236, 223, 0.35); }
-.seat.selected { outline: 2px solid #f0c27a; outline-offset: 2px; }
+button.seat:disabled { opacity: 1; cursor: default; }
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  list-style: none;
+  padding: 0.8rem 0 0;
+  margin: 0;
+  color: rgba(243, 236, 223, 0.78);
+  font-size: 0.85rem;
+}
+.legend li { display: flex; align-items: center; gap: 0.4rem; }
+.swatch { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+.swatch.available { background: #e07a3d; }
+.swatch.selected { background: #f4d35e; }
+.swatch.mine { background: #3ddc97; }
+.swatch.held { background: #5c6b7a; }
+.swatch.sold { background: #2a261f; border: 1px solid rgba(243, 236, 223, 0.25); }
 .time.amber { color: #ffb15a; }
 
 @media (max-width: 800px) {

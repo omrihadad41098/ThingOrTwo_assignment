@@ -37,7 +37,6 @@ export function Events() {
 
   return (
     <section>
-      <p className="eyebrow">Tonight</p>
       <h1>Shows</h1>
       {error ? <p className="error">{error}</p> : null}
       <div className="cards">

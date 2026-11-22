@@ -36,7 +36,7 @@ describe('best available ranking', () => {
     expect(choice).toEqual({ rowIndex: 1, startNumber: 2 });
   });
 
-  it('skips a block that would isolate a new seat when OneSeatMode is on', () => {
+  it('skips a block that would isolate a new seat', () => {
     const row = (index: number, cells: Array<'free' | 'taken'>) => ({
       index,
       cells,

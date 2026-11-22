@@ -5,6 +5,7 @@ import { Countdown } from '../components/Countdown';
 import { SeatMap } from '../components/SeatMap';
 import { useFan } from '../fan';
 import { clockOffset, formatAgorot, joinSeats, previewCoupon } from '../format';
+import { LONE_SEAT_MESSAGE, selectionLeavesLoneSeat } from '../lone-seat';
 
 export function EventPage() {
   const { id = '' } = useParams();
@@ -18,21 +19,25 @@ export function EventPage() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [bestCount, setBestCount] = useState(2);
   const [coupon, setCoupon] = useState('');
-  const [oneSeatMode, setOneSeatMode] = useState(
-    () => sessionStorage.getItem('oneSeatMode') === '1',
-  );
   const inFlight = useRef(false);
   const expired = useRef(new Set<string>());
 
   const load = useCallback(async () => {
     const next = await api<MapPayload>(`/events/${id}/map`, { fan });
     setMap(next);
-    setSelection((current) =>
-      current.filter((seatId) => {
+    let isolated = false;
+    setSelection((current) => {
+      const available = current.filter((seatId) => {
         const seat = next.seats.find((item) => item.id === seatId);
-        return seat != null && seat.status !== 'sold';
-      }),
-    );
+        return seat != null && seat.status === 'available';
+      });
+      if (available.length > 0 && selectionLeavesLoneSeat(next.seats, available)) {
+        isolated = true;
+        return [];
+      }
+      return available;
+    });
+    if (isolated) setMessage(LONE_SEAT_MESSAGE);
     return next;
   }, [fan, id]);
 
@@ -70,11 +75,19 @@ export function EventPage() {
   function toggle(seat: Seat) {
     if (!map?.event.onSale || pending) return;
     setSuccess('');
-    setSelection((current) => {
-      if (current.includes(seat.id)) return current.filter((item) => item !== seat.id);
-      if (seat.status === 'sold' || current.length >= cap) return current;
-      return [...current, seat.id];
-    });
+    if (selection.includes(seat.id)) {
+      setMessage('');
+      setSelection(selection.filter((item) => item !== seat.id));
+      return;
+    }
+    if (seat.status !== 'available' || selection.length >= cap) return;
+    const next = [...selection, seat.id];
+    if (selectionLeavesLoneSeat(map.seats, next)) {
+      setMessage(LONE_SEAT_MESSAGE);
+      return;
+    }
+    setMessage('');
+    setSelection(next);
   }
 
   async function run(action: () => Promise<void>) {
@@ -105,7 +118,7 @@ export function EventPage() {
     void run(async () => {
       const created = await api<CreatedHold>(`/events/${id}/holds`, {
         fan,
-        body: { seatIds: selection, ...(oneSeatMode ? { oneSeatMode: true } : {}) },
+        body: { seatIds: selection },
       });
       setSelection([]);
       setMessage('');
@@ -120,7 +133,6 @@ export function EventPage() {
         fan,
         body: {
           bestAvailable: { count: Math.min(bestCount, cap) },
-          ...(oneSeatMode ? { oneSeatMode: true } : {}),
         },
       });
       setMessage('');
@@ -155,14 +167,6 @@ export function EventPage() {
     });
   }
 
-  function toggleOneSeatMode() {
-    setOneSeatMode((current) => {
-      const next = !current;
-      sessionStorage.setItem('oneSeatMode', next ? '1' : '0');
-      return next;
-    });
-  }
-
   return (
     <section className="event">
       <div>
@@ -180,6 +184,7 @@ export function EventPage() {
           seats={map.seats}
           zones={map.zones}
           selected={selection}
+          heldByYou={map.you?.holds.flatMap((hold) => hold.seatIds) ?? []}
           onToggle={toggle}
           disabled={!map.event.onSale || pending}
         />
@@ -188,19 +193,6 @@ export function EventPage() {
         {success ? <p className="success">{success}</p> : null}
         {message ? <p className="error">{message}</p> : null}
         {slow ? <p>Still working. A lot of people are buying right now.</p> : null}
-        <button
-          type="button"
-          className={oneSeatMode ? 'mode on' : 'mode'}
-          aria-pressed={oneSeatMode}
-          onClick={toggleOneSeatMode}
-        >
-          OneSeatMode
-        </button>
-        <p className="hint">
-          {oneSeatMode
-            ? 'On. A hold that would leave one empty seat stuck on its own is refused.'
-            : 'Off. Seats can be held without the single-seat check.'}
-        </p>
         <h2>Your seats</h2>
         {selectedSeats.length === 0 ? <p>Click seats, or ask for the best that are left.</p> : null}
         {selectedSeats.length > 0 ? (

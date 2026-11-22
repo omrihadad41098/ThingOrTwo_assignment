@@ -16,7 +16,7 @@ The schema does not constrain `expires_at` to be after `created_at`. The tests m
 
 ## Assumptions
 
-Fans are a header, not accounts. Money is integer agorot. A hold is 1 to 4 seats, all or nothing. Events do not change after they are created. Zones cover every row once. The drop is before the show. SAVE10 and WELCOME20 are applied at checkout. An unknown or reused code leaves the hold in place. The lone-seat rule stays off unless OneSeatMode or `LONE_SEAT_RULE` is on, so best available on the brief's room is still B2-B3.
+Fans are a header, not accounts. Money is integer agorot. A hold is 1 to 4 seats, all or nothing. Events do not change after they are created. Zones cover every row once. The drop is before the show. SAVE10 and WELCOME20 are applied at checkout. An unknown or reused code leaves the hold in place. The lone-seat rule is always on. A hold that would leave one empty seat stuck on its own is refused, including best available, and a request cannot turn the rule off. On the brief's room the answer is C4-C5.
 
 ## Stack
 

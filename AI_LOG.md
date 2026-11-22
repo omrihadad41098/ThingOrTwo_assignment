@@ -12,7 +12,7 @@ Money stays integer agorot. SAVE10 is `Math.floor((subtotal * 10 + 50) / 100)`, 
 
 The first seat update only skipped rows already marked sold. Forty fans asked for B7 at once and every request returned 201, because a transaction that had waited could still write. The update now matches the hold pointer read under the row lock, and whether that hold is still live is read again after the lock. One fan wins.
 
-The design had the lone-seat rule as an env flag only. OneSeatMode needed a per-tab switch, so the hold body may send `oneSeatMode: true`. `LONE_SEAT_RULE=true` still forces the rule, and a request cannot turn that off. The default stays off, so best available on the brief's room is still B2-B3. With the rule on, that room returns C4-C5.
+The design had the lone-seat rule as an env flag, then as a per-tab OneSeatMode switch that defaulted off so best available stayed B2-B3. That switch is gone. The hold transaction always judges the row, `oneSeatMode` in the body is ignored, and there is no env flag that turns the rule off. The brief's room therefore returns C4-C5. The seat page uses the same check and refuses the click.
 
 The name chips were a `localStorage` list. Deleting a fan left the name on the gate after a refresh. The gate now renders `GET /admin/users` and rewrites the cache down to names that response still contains.
 

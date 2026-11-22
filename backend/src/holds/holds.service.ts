@@ -23,7 +23,6 @@ const bestAvailableSchema = z.object({
 export const holdBodySchema = z.object({
   seatIds: z.array(z.string()).optional(),
   bestAvailable: bestAvailableSchema.optional(),
-  oneSeatMode: z.boolean().optional(),
 });
 
 export type HoldBody = z.infer<typeof holdBodySchema>;
@@ -38,7 +37,6 @@ export class HoldsService {
     if (explicit === best) {
       throw validation('Send either seatIds or bestAvailable.');
     }
-    const loneSeatRule = this.db.env.loneSeatRule || body.oneSeatMode === true;
     if (explicit) {
       const seats = this.parseExplicit(body.seatIds ?? []);
       return this.db.withWriteTransaction(async (client) => {
@@ -52,7 +50,6 @@ export class HoldsService {
           ttlSeconds: this.db.env.holdTtlSeconds,
           maxSeats: this.db.env.maxSeatsPerUser,
           lockMode: 'wait',
-          loneSeatRule,
         });
       });
     }
@@ -63,7 +60,7 @@ export class HoldsService {
     return this.db.withWriteTransaction(async (client) => {
       await this.requireEvent(client, eventId);
       await ensureUserLock(client, username, eventId);
-      return this.probeBestAvailable(client, eventId, username, request, loneSeatRule);
+      return this.probeBestAvailable(client, eventId, username, request);
     });
   }
 
@@ -130,7 +127,6 @@ export class HoldsService {
     eventId: string,
     username: string,
     request: z.infer<typeof bestAvailableSchema>,
-    loneSeatRule: boolean,
   ): Promise<CreatedHold> {
     const user = await client.query<{ id: string }>(
       'SELECT id FROM users WHERE username = $1',
@@ -145,7 +141,7 @@ export class HoldsService {
         count: request.count,
         maxPriceAgorot: request.maxPriceAgorot,
         zoneId: request.zoneId,
-        loneSeatRule,
+        loneSeatRule: true,
       });
       if (!choice) {
         throw new DomainError(
@@ -168,7 +164,6 @@ export class HoldsService {
           ttlSeconds: this.db.env.holdTtlSeconds,
           maxSeats: this.db.env.maxSeatsPerUser,
           lockMode: 'nowait',
-          loneSeatRule,
         });
         await client.query('RELEASE SAVEPOINT probe');
         return created;

@@ -120,7 +120,6 @@ function CreateShow({ onCreated }: { onCreated: () => void }) {
 
   return (
     <form className="show-form" onSubmit={(event) => void submit(event)}>
-      <p className="eyebrow">No login, same as the API</p>
       <h1>New show</h1>
       <p>
         Every row has the same number of seats. A price zone is a run of rows, and together the zones must cover
