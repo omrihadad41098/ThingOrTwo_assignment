@@ -379,6 +379,30 @@ describe('SeatRush', () => {
     expect(users.rows[0].count).toBe('0');
     expect((await request(app.getHttpServer()).delete('/admin/users/ada')).status).toBe(404);
   });
+
+  it('removes a show and leaves the other shows and fans', async () => {
+    const keep = await createShow({ name: 'Keep' });
+    const gone = await createShow({ name: 'Gone' });
+    const bought = await hold(gone.id, 'ada', ['A1']);
+    expect((await checkout(bought.body.id, 'ada', 'WELCOME20')).status).toBe(200);
+    expect((await hold(gone.id, 'bea', ['A2'])).status).toBe(201);
+
+    const removed = await request(app.getHttpServer()).delete(`/admin/events/${gone.id}`);
+    expect(removed.status).toBe(200);
+    expect(removed.body).toEqual({ id: gone.id, name: 'Gone', deleted: true });
+    expect((await request(app.getHttpServer()).get(`/events/${gone.id}`)).status).toBe(404);
+    expect((await request(app.getHttpServer()).get(`/events/${keep.id}`)).status).toBe(200);
+
+    const events = await pool.query('SELECT count(*) FROM events');
+    const seats = await pool.query('SELECT count(*) FROM seats WHERE event_id = $1', [gone.id]);
+    const users = await pool.query(`SELECT count(*) FROM users WHERE username IN ('ada', 'bea')`);
+    const promos = await pool.query('SELECT count(*) FROM promo_redemptions');
+    expect(events.rows[0].count).toBe('1');
+    expect(seats.rows[0].count).toBe('0');
+    expect(users.rows[0].count).toBe('2');
+    expect(promos.rows[0].count).toBe('0');
+    expect((await request(app.getHttpServer()).delete(`/admin/events/${gone.id}`)).status).toBe(404);
+  });
 });
 
 function showBody(overrides: Record<string, unknown> = {}) {

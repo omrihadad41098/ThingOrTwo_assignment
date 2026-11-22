@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { notFound } from '../common/errors';
 import { normalizeUsername } from '../common/fan';
+import { requireUuid } from '../common/ids';
 import { Database } from '../db/database';
 
 export type FanAccount = {
@@ -81,6 +82,34 @@ export class AdminService {
       await client.query(`DELETE FROM user_event_locks WHERE user_id = $1`, [userId]);
       await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
       return { username, deleted: true as const };
+    });
+  }
+
+  deleteEvent(rawId: string): Promise<{ id: string; name: string; deleted: true }> {
+    const id = requireUuid(rawId, 'event');
+    return this.db.withWriteTransaction(async (client) => {
+      const event = await client.query<{ id: string; name: string }>(
+        `SELECT id, name FROM events WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (event.rowCount === 0) throw notFound("We couldn't find that event.");
+      const name = event.rows[0].name;
+
+      await client.query(`UPDATE seats SET current_hold_id = NULL WHERE event_id = $1`, [id]);
+      await client.query(
+        `DELETE FROM promo_redemptions
+          WHERE order_id IN (SELECT id FROM orders WHERE event_id = $1)`,
+        [id],
+      );
+      await client.query(`DELETE FROM order_seats WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM orders WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM hold_seats WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM holds WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM seats WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM user_event_locks WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM zones WHERE event_id = $1`, [id]);
+      await client.query(`DELETE FROM events WHERE id = $1`, [id]);
+      return { id, name, deleted: true as const };
     });
   }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import { api, ApiError, CreatedHold, Order, Seat, SeatMap as MapPayload } from '../api';
 import { Countdown } from '../components/Countdown';
 import { SeatMap } from '../components/SeatMap';
@@ -166,7 +166,6 @@ export function EventPage() {
   return (
     <section className="event">
       <div>
-        <p className="eyebrow">{map.event.venue}</p>
         <h1>{map.event.name}</h1>
         {!map.event.onSale ? (
           <p>
@@ -287,9 +286,6 @@ export function EventPage() {
               </div>
             </article>
           ))}
-        <p>
-          <Link to="/tickets">My tickets</Link>
-        </p>
       </aside>
     </section>
   );

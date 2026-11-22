@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api, EventSummary } from '../api';
 import { Countdown } from '../components/Countdown';
-import { useFan } from '../fan';
 import { clockOffset } from '../format';
 
 export function Events() {
-  const { fan } = useFan();
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    if (!fan) return;
     let cancelled = false;
     let timer = 0;
     async function tick() {
@@ -34,9 +31,8 @@ export function Events() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [fan]);
+  }, []);
 
-  if (!fan) return <Navigate to="/" replace />;
   const offset = events[0] ? clockOffset(events[0].serverNow) : 0;
 
   return (
@@ -48,7 +44,6 @@ export function Events() {
         {events.map((event) => (
           <Link key={event.id} to={`/events/${event.id}`} className="card">
             <h2>{event.name}</h2>
-            <p>{event.venue}</p>
             <p>{event.seatCount} seats</p>
             {event.onSale ? (
               <p className="on-sale">On sale</p>

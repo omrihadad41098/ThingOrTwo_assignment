@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>SeatRush - System design</title>
+<style>
+  :root { --ink:#1c1917; --muted:#57534e; --line:#e7e5e4; --teal:#0f5132; --teal-bg:#f0fdf4; --amber:#92400e; --amber-bg:#fffbeb; --code:#f5f5f4; }
+  * { box-sizing: border-box; }
+  html { font-size: 10pt; }
+  body { margin: 0; color: var(--ink); font-family: "Segoe UI", Calibri, sans-serif; line-height: 1.38; }
+  @page {
+    size: A4;
+    margin: 12mm 12mm 14mm 12mm;
+    @bottom-left { font-family: "Segoe UI", sans-serif; font-size: 8.5pt; color: #78716c; content: "SeatRush  -  implementation spec"; }
+    @bottom-right { font-family: "Segoe UI", sans-serif; font-size: 8.5pt; color: #78716c; content: counter(page); }
+  }
+  h1 { font-size: 16pt; line-height: 1.15; margin: 14px 0 4px; letter-spacing: -0.02em; break-after: avoid; }
+  h2 { font-size: 12pt; margin: 11px 0 3px; break-after: avoid; }
+  h3 { font-size: 10.5pt; margin: 8px 0 2px; break-after: avoid; }
+  p { margin: 0 0 5px; }
+  ul, ol { margin: 2px 0 6px; padding-left: 16px; }
+  li { margin: 0 0 2px; }
+  code { font-family: Consolas, monospace; font-size: 0.92em; background: var(--code); padding: 0 2px; }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; font-family: Consolas, monospace; font-size: 7.7pt; line-height: 1.32; white-space: pre-wrap; margin: 4px 0 7px; }
+  pre.long { break-inside: auto; }
+  table { width: 100%; border-collapse: collapse; margin: 4px 0 8px; font-size: 8.7pt; }
+  th, td { border: 1px solid #d6d3d1; padding: 3px 5px; vertical-align: top; text-align: left; }
+  th { background: #f5f5f4; font-weight: 650; }
+  tr { break-inside: avoid; }
+  table.ids td:first-child, table.ids th:first-child { white-space: nowrap; width: 46px; }
+  .kicker { font-size: 8.5pt; letter-spacing: 0.08em; text-transform: uppercase; color: var(--teal); font-weight: 700; margin: 0; }
+  .lede { font-size: 11pt; line-height: 1.35; }
+  figure { margin: 6px 0 8px; break-inside: avoid; }
+  figcaption { color: var(--muted); font-size: 8.5pt; margin-top: 2px; }
+  svg { width: 100%; height: auto; display: block; }
+  .callout { border-left: 3px solid var(--teal); background: var(--teal-bg); padding: 5px 8px; margin: 6px 0 8px; break-inside: avoid; }
+  .callout.warn { border-color: #d97706; background: var(--amber-bg); }
+  .callout strong { color: var(--teal); }
+  .callout.warn strong { color: var(--amber); }
+  header.top { margin-bottom: 8px; }
+  header.top h1 { font-size: 22pt; margin: 2px 0 4px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <p class="kicker">Thing or Two - implementation spec - 20 November 2026</p>
+  <h1>SeatRush</h1>
+  <p class="lede">A ticket drop where a seat is sold at most once, a hold is all or nothing, and an expired hold cannot be bought even if no cleanup job has run. Build this. Do not reopen a decision unless a test proves it wrong.</p>
+</header>
+
+<p>Stack: NestJS, PostgreSQL 16, <code>pg</code> (raw SQL), Zod, React 18, TypeScript, Vite, Docker Compose. Code is split into <code>backend/</code> and <code>frontend/</code>. No Redis, no in-process mutex, no TypeORM schema sync, no floating-point money. API on port 3000, web on 5173. Fans are the header <code>X-Fan-Username</code>. The active name is in <code>sessionStorage</code> so two windows are two fans. Build the required product before the extra credit at the end.</p>
+
+<h2>1. System</h2>
+<p>An admin creates an event: grid, price zones in agorot, show time, drop time. Anyone can look. At the drop, a fan holds 1 to 4 seats for <code>HOLD_TTL_SECONDS</code> (default 300) and checks out. Checkout is the purchase. There is no payment and no password.</p>
+<p>API processes are stateless. PostgreSQL decides. A hold is a row with <code>expires_at</code>. The row lock lasts for the transaction, milliseconds, never for the five minutes. The winner is the first commit. Other transactions re-read the locked row and roll back, so losers leave no hold row. Map reads take no locks. They compute status from the seat plus the hold clock, using <code>now()</code> inside the database. A dead sweeper changes nothing about correctness.</p>
+
+<figure>
+  <svg viewBox="0 0 720 248" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fan browser, web server, three API copies, one PostgreSQL primary.">
+    <rect width="720" height="248" fill="#fff"/>
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M0 0 L10 5 L0 10 Z" fill="#0f5132"/>
+      </marker>
+    </defs>
+    <rect x="250" y="8" width="220" height="40" rx="6" fill="#f8fafc" stroke="#0f5132"/>
+    <text x="360" y="26" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="13" font-weight="650" fill="#1c1917">Fan browser</text>
+    <text x="360" y="40" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">one username per tab</text>
+    <rect x="16" y="78" width="150" height="58" rx="6" fill="#f8fafc" stroke="#0f5132"/>
+    <text x="91" y="100" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="650">Web :5173</text>
+    <text x="91" y="116" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">no seat rules</text>
+    <rect x="190" y="70" width="160" height="72" rx="6" fill="#f0fdf4" stroke="#0f5132"/>
+    <text x="270" y="90" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="650">API copy 1..N</text>
+    <text x="270" y="106" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">:3000, stateless</text>
+    <text x="270" y="122" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">read pool / write pool</text>
+    <rect x="372" y="78" width="160" height="58" rx="6" fill="#f0fdf4" stroke="#0f5132"/>
+    <text x="452" y="100" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="650">Same code again</text>
+    <text x="452" y="116" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">no shared memory</text>
+    <rect x="548" y="78" width="156" height="58" rx="6" fill="#fffbeb" stroke="#92400e"/>
+    <text x="626" y="100" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="650" fill="#92400e">Sweeper</text>
+    <text x="626" y="116" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#92400e">optional tidy-up</text>
+    <rect x="160" y="178" width="400" height="52" rx="6" fill="#ecfdf5" stroke="#0f5132" stroke-width="1.6"/>
+    <text x="360" y="198" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="13" font-weight="650">PostgreSQL 16 - one primary</text>
+    <text x="360" y="216" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">seat-row locks, now(), one order per hold</text>
+    <line x1="320" y1="48" x2="100" y2="78" stroke="#0f5132" marker-end="url(#ah)"/>
+    <line x1="400" y1="48" x2="300" y2="70" stroke="#0f5132" marker-end="url(#ah)"/>
+    <line x1="270" y1="142" x2="320" y2="178" stroke="#0f5132" marker-end="url(#ah)"/>
+    <line x1="452" y1="136" x2="420" y2="178" stroke="#0f5132" marker-end="url(#ah)"/>
+    <text x="150" y="66" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">pages</text>
+    <text x="400" y="62" font-family="Segoe UI,sans-serif" font-size="10" fill="#57534e">JSON + X-Fan-Username</text>
+  </svg>
+  <figcaption>Figure 1. Compose runs one API. The design is already safe at three copies, because none of them owns a lock. Fan path: name, wait for the drop, choose seats or ask for N together, hold, confirm purchase, ticket. Failures the screen must say out loud: "Someone just took B3", "Your hold has expired", "Too many people are trying. Please try again."</figcaption>
+</figure>
+
+<figure>
+  <svg viewBox="0 0 720 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Fan A locks seat B7 and commits. Fan B waits, then rolls back.">
+    <rect width="720" height="250" fill="#fff"/>
+    <defs>
+      <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#0f5132"/></marker>
+    </defs>
+    <line x1="110" y1="28" x2="110" y2="236" stroke="#d6d3d1"/>
+    <line x1="360" y1="28" x2="360" y2="236" stroke="#d6d3d1"/>
+    <line x1="610" y1="28" x2="610" y2="236" stroke="#d6d3d1"/>
+    <text x="110" y="18" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="700" fill="#0f5132">Fan A</text>
+    <text x="360" y="18" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="700" fill="#0f5132">PostgreSQL</text>
+    <text x="610" y="18" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="700" fill="#0f5132">Fan B</text>
+    <line x1="110" y1="48" x2="360" y2="48" stroke="#0f5132" marker-end="url(#ah2)"/>
+    <text x="235" y="42" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11">BEGIN, lock user A</text>
+    <line x1="110" y1="84" x2="360" y2="84" stroke="#0f5132" marker-end="url(#ah2)"/>
+    <text x="235" y="78" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11">SELECT B7 FOR UPDATE</text>
+    <line x1="610" y1="120" x2="360" y2="120" stroke="#92400e" marker-end="url(#ah2)"/>
+    <text x="485" y="114" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11" fill="#92400e">SELECT B7 FOR UPDATE, waits</text>
+    <line x1="110" y1="156" x2="360" y2="156" stroke="#0f5132" marker-end="url(#ah2)"/>
+    <text x="235" y="150" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11">INSERT hold, COMMIT</text>
+    <line x1="360" y1="192" x2="610" y2="192" stroke="#991b1b" marker-end="url(#ah2)"/>
+    <text x="500" y="186" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11" fill="#991b1b">lock granted, hold is live, ROLLBACK</text>
+    <text x="110" y="230" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="650" fill="#0f5132">201 until expiresAt</text>
+    <text x="610" y="230" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="12" font-weight="650" fill="#991b1b">409 Someone just took B7</text>
+  </svg>
+  <figcaption>Figure 2. Contested seat. The wait is a PostgreSQL row lock, so it is the same when A and B hit different API processes. B's rollback writes nothing.</figcaption>
+</figure>
+
+<h2>2. Requirements</h2>
+<table class="ids">
+  <thead><tr><th>ID</th><th>The system does this</th></tr></thead>
+  <tbody>
+    <tr><td>FR-1</td><td>Admin <code>POST /events</code> with name, venue, <code>startsAt</code>, <code>dropAt</code>, <code>rowCount</code>, <code>seatsPerRow</code>, zones. No login. Creates every seat. Row A is nearest the stage. Seat numbers start at 1. Public id is <code>B7</code>.</td></tr>
+    <tr><td>FR-2</td><td>Zones are contiguous inclusive row ranges, one price in agorot, and together cover every row once. A row has one price.</td></tr>
+    <tr><td>FR-3</td><td>A shown seat is <code>available</code>, <code>held</code>, or <code>sold</code>. The map never names another fan.</td></tr>
+    <tr><td>FR-4</td><td>Anyone can list and view before the drop. Nobody can hold before <code>drop_at</code>.</td></tr>
+    <tr><td>FR-5</td><td>A hold is 1 to 4 distinct seats, or N together. All or nothing. Failure leaves no new hold.</td></tr>
+    <tr><td>FR-6</td><td>Expiry is <code>now() + HOLD_TTL_SECONDS</code>. Only the creator can release early.</td></tr>
+    <tr><td>FR-7</td><td>Used = seats in live holds + seats bought, per fan per event, capped by <code>MAX_SEATS_PER_USER</code> (default 4). Over-cap rejects the whole request. The cap holds when that fan's requests run at once.</td></tr>
+    <tr><td>FR-8</td><td>At and after <code>expires_at</code>, checkout fails if no order exists. True with the sweeper off.</td></tr>
+    <tr><td>FR-9</td><td>An expired hold's seats are available to the next read and the next hold immediately. The brief's 5-second bound is met at once.</td></tr>
+    <tr><td>FR-10</td><td>Concurrent holds of one seat: exactly one winner. Losers get a conflict that names the seat.</td></tr>
+    <tr><td>FR-11</td><td>Best available holds N side-by-side seats in one row, in one transaction. Optional max price and zone. Order: nearest row, then block whose middle is closest to the row middle, then lower start. Nothing fits: reject, hold nothing.</td></tr>
+    <tr><td>FR-12</td><td>Worked case, lone-seat rule off: 8 seats, row A sold out, B4 and B5 sold, N = 2. Answer B2-B3.</td></tr>
+    <tr><td>FR-13</td><td>Only the holder can check out. One order per hold. Checkout again returns that order, including after the original expiry.</td></tr>
+    <tr><td>FR-14</td><td>Owner can release a live hold. Seats return and leave the cap. Another fan gets 403.</td></tr>
+    <tr><td>FR-15</td><td>Screens: name gate, event list with countdown, map by zone, selection or best available, hold countdown, checkout, my tickets. Poll the map. A double click sends one hold. Show the server's <code>message</code>.</td></tr>
+  </tbody>
+</table>
+<p><strong>Also required, not product rules.</strong> <code>docker compose up --build</code> migrates and seeds Demo Night already on sale. OpenAPI at <code>/docs</code> and <code>/docs-json</code>. TTL and cap come from the environment and a bad value refuses to boot. One test command. A real-PostgreSQL test where many holds hit one seat and exactly one wins. Human error sentences. Money is integer agorot. Drop, expiry, and "is this hold live?" use PostgreSQL <code>now()</code>, which is frozen for the transaction. Map reads stay up when the write pool is saturated: separate pools, reads take no locks, writes give up after 2 seconds with 503.</p>
+
+<h2>3. Decisions</h2>
+<p>A hold is live only when <code>status = 'active'</code> and <code>expires_at &gt; now()</code>. There is no <code>expired</code> status. Use that one predicate for the map, the cap, and checkout.</p>
+<table>
+  <thead><tr><th>Choice</th><th>Why this, and what was set aside</th></tr></thead>
+  <tbody>
+    <tr><td>Seat row is the mutex, via <code>SELECT FOR UPDATE</code>. Cap mutex is <code>user_event_locks</code>.</td><td>An in-process lock dies at the second API. Redis is a second source of truth. Serializable isolation also aborts innocent best-available scans. Read committed plus these locks is the protocol.</td></tr>
+    <tr><td>Lock only for the transaction.</td><td>A lock held for the TTL would freeze the drop. The five minutes are <code>expires_at</code>.</td></tr>
+    <tr><td>Lock seats one at a time, in <code>(row_index, seat_number)</code> order. Lock order is user row, then hold row if it exists, then seats.</td><td>One unordered <code>SELECT FOR UPDATE</code> can deadlock overlapping requests. An event-wide lock makes the drop single-threaded. Creating a hold does not update the old hold row: that deadlocks with checkout, which locks the hold first.</td></tr>
+    <tr><td>Cap is a count under the user lock, not a counter column.</td><td>A stored counter drifts when a hold expires with no update. The count query uses <code>expires_at</code>. It counts seats, not holds. Two fans do not queue on each other.</td></tr>
+    <tr><td>Reads: own pool, <code>default_transaction_read_only</code>, no cache, no replica.</td><td>A shared pool lets buyers starve the map. A replica can show a sold seat as free. Staleness is only uncommitted work, which is the safe direction: a fan may click a seat that was just taken and will be told.</td></tr>
+    <tr><td>Explicit holds wait up to 2s. Best available uses <code>NOWAIT</code> inside a savepoint, at most 8 probes, one outer transaction.</td><td>The fan asked for those exact seats, so a short wait is fair. Best available must not sit behind a seat it will not get. <code>SKIP LOCKED</code> treats "locked" as "gone".</td></tr>
+    <tr><td>Unique <code>orders.hold_id</code>. If an order exists, return it before checking expiry.</td><td>The brief wants the same order back. A fan who bought and retries after five minutes still gets the tickets. A fan who never bought is refused.</td></tr>
+    <tr><td>First commit wins. No waiting room in this build.</td><td>The brief requires one winner, not a moral ordering of packets.</td></tr>
+    <tr><td>Raw SQL, not an ORM, for writes. React with no Redux and no component kit.</td><td>The graded part is the transaction. Four screens do not need a store. Seat buttons should be plain.</td></tr>
+  </tbody>
+</table>
+<p><strong>Assumptions, where the brief was silent.</strong> Usernames match <code>^[a-z0-9][a-z0-9_-]{0,31}$</code> after trim and lower. Events are immutable. No aisles: "together" means consecutive numbers in one row. A request is at most 4 seats even if the cap is higher; the cap still applies across holds. Manual selection need not be contiguous. Several live holds are allowed. <code>drop_at</code> is strictly before <code>starts_at</code>. Prices are integers &gt;= 0. Caps: 1-60 rows, 1-100 seats per row. Row labels are spreadsheet-style (0 is A, 25 is Z, 26 is AA). Released and expired holds do not count. Releasing an already released hold is 200. Checkout of an expired hold with no order is 409. Polling every 2 seconds is the live map. Language is English. Display money as <code>ILS 349.35</code> from integer agorot, not from a float.</p>
+<div class="callout warn"><strong>Leave these out.</strong> No Redis. No lock held for the TTL. No float money. No <code>synchronize: true</code>. No trust of <code>seats.state</code> without the live-hold predicate. No availability check that commits before the insert. No "this seat is yours" before HTTP 201. No active fan in <code>localStorage</code>. No second function that inserts holds.</div>
+
+<h2>4. Schema</h2>
+<p>One file, <code>backend/src/db/sql/001_init.sql</code>. The runner creates <code>schema_migrations</code>, takes session advisory lock <code>814200</code> on a dedicated connection, applies the file, seeds, unlocks, then releases the connection. A pooled connection that returns to the pool while locked keeps the lock. <code>gen_random_uuid()</code> is built into PostgreSQL 16.</p>
+<pre class="long">CREATE TABLE users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  username text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE events (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name text NOT NULL, venue text NOT NULL,
+  starts_at timestamptz NOT NULL, drop_at timestamptz NOT NULL,
+  row_count integer NOT NULL, seats_per_row integer NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK (drop_at &lt; starts_at),
+  CHECK (row_count BETWEEN 1 AND 60 AND seats_per_row BETWEEN 1 AND 100)
+);
+CREATE TABLE zones (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid NOT NULL REFERENCES events (id),
+  name text NOT NULL, from_row integer NOT NULL, to_row integer NOT NULL,
+  price_agorot integer NOT NULL CHECK (price_agorot &gt;= 0),
+  CHECK (from_row &gt;= 0 AND to_row &gt;= from_row),
+  UNIQUE (event_id, name)
+);
+CREATE TABLE holds (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_id uuid NOT NULL REFERENCES events (id),
+  user_id uuid NOT NULL REFERENCES users (id),
+  status text NOT NULL CHECK (status IN ('active','released','converted')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL,
+  CHECK (expires_at &gt; created_at)
+);
+CREATE TABLE seats (
+  event_id uuid NOT NULL REFERENCES events (id),
+  row_index integer NOT NULL, seat_number integer NOT NULL,
+  zone_id uuid NOT NULL REFERENCES zones (id),
+  state text NOT NULL CHECK (state IN ('available','held','sold')),
+  current_hold_id uuid REFERENCES holds (id),
+  PRIMARY KEY (event_id, row_index, seat_number)
+);
+CREATE TABLE hold_seats (
+  hold_id uuid NOT NULL REFERENCES holds (id),
+  event_id uuid NOT NULL, row_index integer NOT NULL, seat_number integer NOT NULL,
+  PRIMARY KEY (hold_id, event_id, row_index, seat_number),
+  FOREIGN KEY (event_id, row_index, seat_number)
+    REFERENCES seats (event_id, row_index, seat_number)
+);
+CREATE TABLE user_event_locks (
+  user_id uuid NOT NULL REFERENCES users (id),
+  event_id uuid NOT NULL REFERENCES events (id),
+  PRIMARY KEY (user_id, event_id)
+);
+CREATE TABLE orders (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  hold_id uuid NOT NULL REFERENCES holds (id),
+  event_id uuid NOT NULL REFERENCES events (id),
+  user_id uuid NOT NULL REFERENCES users (id),
+  subtotal_agorot integer NOT NULL, discount_agorot integer NOT NULL,
+  total_agorot integer NOT NULL, promo_code text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT orders_hold_id_key UNIQUE (hold_id),
+  CHECK (subtotal_agorot &gt;= 0 AND discount_agorot &gt;= 0 AND total_agorot &gt;= 0
+     AND total_agorot = subtotal_agorot - discount_agorot)
+);
+CREATE TABLE order_seats (
+  order_id uuid NOT NULL REFERENCES orders (id),
+  event_id uuid NOT NULL, row_index integer NOT NULL, seat_number integer NOT NULL,
+  price_agorot integer NOT NULL CHECK (price_agorot &gt;= 0),
+  PRIMARY KEY (order_id, event_id, row_index, seat_number),
+  FOREIGN KEY (event_id, row_index, seat_number)
+    REFERENCES seats (event_id, row_index, seat_number)
+);
+CREATE TABLE promo_redemptions (
+  code text NOT NULL, user_id uuid NOT NULL REFERENCES users (id),
+  order_id uuid NOT NULL REFERENCES orders (id),
+  PRIMARY KEY (code, user_id)
+);
+CREATE INDEX holds_live_idx ON holds (user_id, event_id, expires_at) WHERE status = 'active';
+CREATE INDEX seats_current_hold_idx ON seats (current_hold_id) WHERE current_hold_id IS NOT NULL;</pre>
+<p><code>seats</code> is the mutex and the map. <code>current_hold_id</code> can point at one hold. <code>hold_seats</code> is history and is not a uniqueness constraint. <code>orders.hold_id</code> is one purchase per hold. Price of an unsold seat lives only on the zone; <code>order_seats.price_agorot</code> freezes it at sale. <code>user_event_locks</code> has no counter. Do not add a <code>seat_claims</code> table: a primary key per seat blocks expired seats until something deletes the claim.</p>
+<p>Generate seats in the create-event transaction. Inserted count must equal <code>row_count * seats_per_row</code>, or roll back.</p>
+<pre>INSERT INTO seats (event_id, row_index, seat_number, zone_id, state)
+SELECT $event, r.idx, s.n, z.id, 'available'
+FROM generate_series(0, $rowCount - 1) AS r(idx)
+JOIN zones z ON z.event_id = $event AND r.idx BETWEEN z.from_row AND z.to_row
+CROSS JOIN generate_series(1, $seatsPerRow) AS s(n);</pre>
+<p>Demo seed, only when <code>events</code> is empty, inside the same advisory lock: Demo Night at The Rialto, 8 rows, 12 seats, Stalls A-C at 15000, Circle D-F at 10000, Balcony G-H at 6000, drop one hour ago, show in 30 days. A second boot sees the row and inserts nothing.</p>
+<p>Map status, every read, no other version of this:</p>
+<pre>CASE
+  WHEN s.state = 'sold' THEN 'sold'
+  WHEN s.state = 'held' AND h.status = 'active' AND h.expires_at &gt; now() THEN 'held'
+  ELSE 'available'
+END</pre>
+<p>Labels. Index 0 is A, 25 is Z, 26 is AA. Parse seat ids case-insensitively. Respond with the canonical form.</p>
+<pre>function indexToLabel(index: number): string {
+  let n = index + 1, s = "";
+  while (n &gt; 0) {
+    s = String.fromCharCode(65 + ((n - 1) % 26)) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}</pre>
+
+<h2>5. Transactions</h2>
+<p>The bug to prevent is a check outside the lock. The only availability fact that may guide a write is the row from <code>SELECT ... FOR UPDATE</code> in the same transaction as the insert. An earlier select is a hint. <code>withWriteTransaction</code> is the only way to mutate: <code>BEGIN</code>, <code>SET LOCAL lock_timeout = '2s'</code>, <code>SET LOCAL statement_timeout = '5s'</code>, callback, commit or roll back, always release the client. SQLSTATE <code>55P03</code> and <code>40P01</code> become 503 after rollback. Deadlock retries the whole transaction once. "Seat taken" is not retried. Write pool max 10, read pool max 10, connection timeout 2s. Tests set the write pool to at least 50. A failed pool checkout is 503, message <code>Too many people are trying for these seats. Please try again.</code></p>
+<p>User and cap lock, both steps, because <code>ON CONFLICT DO NOTHING</code> does not lock the existing row:</p>
+<pre>INSERT INTO users (username) VALUES ($1) ON CONFLICT DO NOTHING;
+SELECT id FROM users WHERE username = $1;
+INSERT INTO user_event_locks (user_id, event_id) VALUES ($id, $event) ON CONFLICT DO NOTHING;
+SELECT 1 FROM user_event_locks WHERE user_id = $id AND event_id = $event FOR UPDATE;</pre>
+<p><strong>Create hold.</strong> Explicit selection and best available share this writer. Caller already holds the user-event lock.</p>
+<ol>
+  <li>Missing event is 404. <code>drop_at &gt; now()</code> is 409 <code>NOT_ON_SALE</code>.</li>
+  <li>Count used seats. If <code>used + requested &gt; cap</code>, fail before locking seats. Message: <code>You can only hold 4 seats for this show, and you already have 4.</code> Use the real numbers.</li>
+  <li>Lock each requested seat in order. Explicit holds wait. Best-available probes use <code>NOWAIT</code>.</li>
+  <li>Classify from that locked row only. Anything not free throws <code>SEAT_UNAVAILABLE</code> and inserts nothing.</li>
+  <li>Insert the hold with <code>expires_at = now() + make_interval(secs =&gt; $ttl)</code>. Insert <code>hold_seats</code>. Update each seat to <code>held</code> and the new pointer, <code>AND state &lt;&gt; 'sold'</code>. Each update must change one row.</li>
+</ol>
+<pre>SELECT s.state, s.current_hold_id, h.status AS hold_status, h.expires_at, h.user_id AS holder_id
+FROM seats s LEFT JOIN holds h ON h.id = s.current_hold_id
+WHERE s.event_id = $1 AND s.row_index = $2 AND s.seat_number = $3
+FOR UPDATE OF s;</pre>
+<p>No row: 400, <code>B99 isn't a seat in this event.</code> Sold: <code>B3 is already sold.</code> Live and yours: <code>You already hold B3.</code> Live and someone else: <code>Someone just took B3.</code> Several seats get <code>Nothing was held. </code> in front, and a mixed case names both reasons. <code>seatIds</code> lists every blocker. Anything else is free, including a held seat whose clock has passed. Take it by overwriting the pointer. Leave the old hold <code>active</code>; <code>expires_at</code> drops it from the cap. Do not lock its sibling seats in this transaction.</p>
+<pre>SELECT
+  (SELECT count(*) FROM hold_seats hs JOIN holds h ON h.id = hs.hold_id
+    WHERE h.user_id = $user AND h.event_id = $event
+      AND h.status = 'active' AND h.expires_at &gt; now())
++ (SELECT count(*) FROM order_seats os JOIN orders o ON o.id = os.order_id
+    WHERE o.user_id = $user AND o.event_id = $event) AS used;</pre>
+<p><strong>Release.</strong> Lock user, hold, then its seats. Wrong fan: 403 <code>This hold belongs to another fan.</code> Already converted: 409 <code>These seats are already bought.</code> Already released: 200. Live but expired: 409 <code>Your hold has expired. These seats are back on sale.</code> Otherwise set <code>released</code> and free seats whose pointer is still this hold. Update count must equal the hold size.</p>
+<p><strong>Checkout.</strong> Lock user, then the hold. If an order exists, return it with <code>alreadyExisted: true</code> and do not look at expiry or at a new promo. Wrong fan: 403. Released: 409 <code>This hold was released.</code> Expired and no order: 409 and roll back. Then lock the seats, confirm each is <code>held</code> by this hold, sum zone prices, insert order and lines, set seats <code>sold</code> with a null pointer, set the hold <code>converted</code>. Unique violation <code>orders_hold_id_key</code> (23505) aborts the loser: read the winner's order on a new connection and return 200. Do not treat every 23505 that way. A promo-key violation is 409 <code>PROMO_USED</code> and the hold stays live.</p>
+<p>After the single-seat stampede, <code>holds</code> has one row and <code>hold_seats</code> has one row. This query and <code>sold</code> seats with a non-null pointer are both empty:</p>
+<pre>SELECT event_id, row_index, seat_number, count(*)
+FROM hold_seats hs JOIN holds h ON h.id = hs.hold_id
+WHERE h.status = 'active' AND h.expires_at &gt; now()
+GROUP BY 1, 2, 3 HAVING count(*) &gt; 1;</pre>
+
+<h2>6. Expiry and best available</h2>
+<p>At <code>expires_at</code>, checkout fails and the map shows available. The brief allows 5 seconds for a sweeper; this design is correct at the instant, which is inside that bound. Tests move <code>expires_at</code> to <code>now() - interval '1 second'</code> and to 6 seconds ago. Do not sleep. The grader's own run will set a short TTL and sleep; the predicate passes that too.</p>
+<p>Sweeper every 10 seconds, <code>SWEEPER_ENABLED</code> default true, tests set false. <code>pg_try_advisory_xact_lock(814201)</code> so three copies do not fight. It only clears a <code>held</code> seat whose hold is not live. It must not run on the checkout path.</p>
+<pre>UPDATE seats s SET state = 'available', current_hold_id = NULL
+FROM holds h
+WHERE s.current_hold_id = h.id AND s.state = 'held'
+  AND NOT (h.status = 'active' AND h.expires_at &gt; now());</pre>
+<p><strong>Best available</strong> is a pure function plus the shared writer. <code>cells[0]</code> is seat 1. Skip a row on zone or price. A start <code>s</code> is a candidate when <code>s</code> through <code>s+count-1</code> are free. Rank by row index, then distance, then start.</p>
+<pre>rowCenter = (1 + seatsPerRow) / 2
+blockCenter = (start + end) / 2
+distance = Math.abs(blockCenter - rowCenter)</pre>
+<p>Eight seats, taken {4, 5}, N = 2, row center 4.5. Blocks 2-3 and 6-7 are both distance 2. Lower start wins: 2-3. With row A full, the hold is B2-B3.</p>
+<p>Inside one transaction: lock the user, check the drop and the cap (a cap failure is <code>LIMIT_EXCEEDED</code>, not "no block"), then up to 8 times load the grid with no locks, call <code>chooseBlock</code>, <code>SAVEPOINT probe</code>, try the writer with <code>NOWAIT</code>. Success releases the savepoint and commits. Seat taken or <code>55P03</code>: <code>ROLLBACK TO SAVEPOINT</code> and try again. After an error, PostgreSQL accepts nothing except that rollback. Eight lock-only misses: 503. No candidate: 409 <code>No 2 seats together are free in that price range.</code></p>
+
+<h2>7. HTTP API</h2>
+<p>No path prefix. CORS for <code>http://localhost:5173</code> and <code>127.0.0.1:5173</code>, header <code>X-Fan-Username</code>. Swagger at <code>/docs</code>, JSON at <code>/docs-json</code>, with the fan header as an API key named <code>fan</code> so the grader can try a hold. Every error:</p>
+<pre>{ "statusCode": 409, "code": "SEAT_UNAVAILABLE", "message": "Someone just took B3.", "seatIds": ["B3"] }</pre>
+<p>The client shows <code>message</code> only. A 500 message is <code>Something went wrong. Please try again.</code> and the stack stays in the log.</p>
+<table>
+  <thead><tr><th>Status</th><th>Code</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td>400</td><td>VALIDATION</td><td>Bad body, duplicate seat, size outside 1..4, bad username. Sentences name the problem: <code>List each seat once.</code> <code>A hold is 1 to 4 seats.</code></td></tr>
+    <tr><td>409</td><td>PROMO_INVALID</td><td>Unknown coupon: <code>That coupon code isn't valid.</code> The hold stays live.</td></tr>
+    <tr><td>409</td><td>PROMO_USED</td><td>WELCOME20 already used by this fan: <code>WELCOME20 can only be used once.</code> The hold stays live.</td></tr>
+    <tr><td>409</td><td>LONE_SEAT</td><td>OneSeatMode on, and the hold would create a new lone seat. Sentence in section 11. Nothing is held.</td></tr>
+    <tr><td>401</td><td>UNAUTHENTICATED</td><td>Missing header on a protected route.</td></tr>
+    <tr><td>403</td><td>FORBIDDEN</td><td>Not the holder.</td></tr>
+    <tr><td>404</td><td>NOT_FOUND</td><td>Unknown event or hold.</td></tr>
+    <tr><td>409</td><td>NOT_ON_SALE</td><td><code>Tickets go on sale at</code> plus the drop timestamp.</td></tr>
+    <tr><td>409</td><td>SEAT_UNAVAILABLE, LIMIT_EXCEEDED, NO_BLOCK, HOLD_EXPIRED, HOLD_CLOSED, PROMO_INVALID, PROMO_USED, LONE_SEAT</td><td>Sentences in sections 5, 6, and 11.</td></tr>
+    <tr><td>503</td><td>BUSY</td><td>Lock timeout, deadlock after one retry, pool exhausted, best-available probes all locked.</td></tr>
+  </tbody>
+</table>
+<table>
+  <thead><tr><th>Route</th><th>Body and result</th></tr></thead>
+  <tbody>
+    <tr><td>GET /health</td><td><code>{"status":"ok"}</code>. No database call.</td></tr>
+    <tr><td>POST /events</td><td>No fan. <code>{ name, venue, startsAt, dropAt, rowCount, seatsPerRow, zones: [{ name, fromRow, toRow, priceAgorot }] }</code>. 201 with ids and <code>seatCount</code>. Gaps, overlaps, drop not before start: 400 with a specific sentence.</td></tr>
+    <tr><td>GET /events</td><td>List. Each item includes one shared <code>serverNow</code>, <code>onSale</code>, counts.</td></tr>
+    <tr><td>GET /events/:id</td><td>One event plus zones. 404 if missing.</td></tr>
+    <tr><td>GET /events/:id/map</td><td>Poll target. Header optional; do not create a user. Returns event, <code>serverNow</code>, <code>maxSeatsPerUser</code>, <code>holdTtlSeconds</code>, zones, seats <code>{ id, row, number, zoneId, priceAgorot, status }</code> in row order, and <code>you</code> or null. <code>you</code> is <code>{ username, used, remaining, holds: [{ id, expiresAt, seatIds, totalAgorot }] }</code> for live holds only.</td></tr>
+    <tr><td>POST /events/:id/holds</td><td>Fan required. Exactly one of <code>{ "seatIds": ["B2","B3"] }</code> or <code>{ "bestAvailable": { "count": 2, "maxPriceAgorot": 10000, "zoneId": "uuid" } }</code>. Optional <code>oneSeatMode: true</code> turns the lone-seat rule on for that request only. 201 <code>{ id, eventId, expiresAt, serverNow, seatIds, totalAgorot }</code>. Seat ids come back canonical and sorted.</td></tr>
+    <tr><td>POST /holds/:id/release</td><td>Fan. 200 <code>{ id, status: "released", seatIds }</code>. Idempotent for the owner.</td></tr>
+    <tr><td>POST /holds/:id/checkout</td><td>Fan. Body <code>{}</code> or <code>{ "promoCode": "SAVE10" }</code>. 200 <code>{ id, holdId, eventId, eventName, seatIds, subtotalAgorot, discountAgorot, totalAgorot, promoCode, createdAt, alreadyExisted }</code>. Replay is 200 with the same id.</td></tr>
+    <tr><td>GET /me/holds, GET /me/orders</td><td>Fan. Unknown username with a valid shape returns empty lists and creates no user. Orders newest first, same money fields as checkout.</td></tr>
+    <tr><td>GET /admin/users</td><td>No fan. Array of <code>{ username, createdAt, holdCount, orderCount }</code>, newest first. This is also the name-gate switcher list. A username appears here only after that fan has held a seat.</td></tr>
+    <tr><td>DELETE /admin/users/:username</td><td>No fan. 200 <code>{ username, deleted: true }</code>. 404 <code>We couldn't find that fan.</code> Frees that fan's held and sold seats, then deletes redemptions, order lines, orders, hold lines, holds, the per-event lock, and the user.</td></tr>
+    <tr><td>DELETE /admin/events/:id</td><td>No fan. 200 <code>{ id, name, deleted: true }</code>. 404 <code>We couldn't find that event.</code> Deletes that show's redemptions, order lines, orders, hold lines, holds, seats, locks, and zones. Fans and other shows stay.</td></tr>
+  </tbody>
+</table>
+
+<h2>8. Screens and runtime</h2>
+<p>Vite, React 18, React Router, one stylesheet. <code>VITE_API_BASE_URL=http://localhost:3000</code> baked at build. Routes: <code>/</code> name gate, <code>/events</code>, <code>/events/:id</code>, <code>/tickets</code>, <code>/admin</code>. Header shows the name, a Switch button, and an Admin link. The active name is <code>sessionStorage</code> key <code>fan</code> only. Signing in writes that key and does not add the name to a saved chip list.</p>
+<p><strong>Name switcher. Build this.</strong> Switch clears <code>sessionStorage</code> key <code>fan</code> and opens <code>/</code>. The chips under the name field are the <code>username</code> values from <code>GET /admin/users</code>, newest first. Fetch that route every time <code>/</code> opens. Render those names and no others. Do not render <code>localStorage</code> key <code>seatrush.recent</code> as the chips. If the fetch fails, show no chips. After a successful fetch, rewrite <code>seatrush.recent</code> to the names that are both in that cache and in the response, so a deleted or unknown name cannot survive a refresh or a restart. If the signed-in name is missing from the response, clear <code>sessionStorage</code> key <code>fan</code> and clear the name field when it still shows that name. A fan who has only typed a name, and has never held a seat, is not in the chip list.</p>
+<p>Countdown offset: <code>Date.parse(serverNow) - Date.now()</code>, then remaining is <code>expiresAt</code> minus <code>Date.now() + offset</code>. List polls every 5 seconds. The map polls every 2 seconds, next poll scheduled when the previous fetch settles, and skips the network while <code>document.hidden</code>. Before the drop the map is visible and not clickable.</p>
+<p>Seat button name like <code>Row B seat 7, Stalls, ILS 150.00, available</code>. Selection cap on the client is <code>min(4, you.remaining)</code>. Format agorot with integer division, <code>ILS</code> plus shekels and two digits, never <code>(agorot / 100).toFixed</code> as the source of the string. A ref blocks a second hold or checkout; the button is also disabled. Do not mark seats held before 201. After 800 ms show <code>Still working. A lot of people are buying right now.</code> On 409, refresh, drop the named seats from the selection, show <code>message</code>. On 503, keep the selection. Under 60 seconds the countdown turns amber. At zero, hide checkout and refresh. Confirm purchase copy: <code>No payment is taken. Confirming reserves the seats in your name.</code> Success: <code>You're going. Seats B2 and B3.</code> A replay is success. My tickets lists live holds, with a countdown and a way back, and orders. Empty: <code>You don't have tickets yet.</code></p>
+<p><strong>Folders.</strong> <code>backend/</code> is the Nest API. <code>frontend/</code> is the React app. They do not import each other's source. Root holds <code>docker-compose.yml</code>, <code>.env.example</code>, <code>README.md</code>, <code>DECISIONS.md</code>, and <code>AI_LOG.md</code>. Compose service names stay <code>api</code> and <code>web</code>. The <code>api</code> image builds from <code>./backend</code>. The <code>web</code> image builds from <code>./frontend</code>. The <code>test</code> image also builds from <code>./backend</code>.</p>
+<p><strong>How the browser talks to the API.</strong> The frontend calls <code>VITE_API_BASE_URL</code>, baked at build as <code>http://localhost:3000</code> (<code>frontend/.env.development</code> for <code>npm run dev</code>, a Docker build arg for the image). <code>frontend/src/api.ts</code> uses <code>fetch</code>. Fan routes send <code>X-Fan-Username</code>. The API listens on <code>0.0.0.0:3000</code> with no path prefix and allows CORS from <code>http://localhost:5173</code> and <code>http://127.0.0.1:5173</code>. The browser does not open a database connection.</p>
+<p><strong>Compose.</strong> <code>db</code> is <code>postgres:16</code>, user/password/database <code>seatrush</code>, health check <code>pg_isready</code>, named volume, port 5432. <code>api</code> depends on healthy db, retries connect 30 times. <code>web</code> serves <code>vite preview --host 0.0.0.0 --port 5173 --strictPort</code>. Service <code>test</code> is profile <code>test</code>, database <code>seatrush_test</code>, <code>HOLD_TTL_SECONDS=300</code>, <code>SWEEPER_ENABLED=false</code>, command <code>npm test</code>. The image includes dev dependencies so that command works. Test setup creates <code>seatrush_test</code> and migrates it, and does not seed the demo there. <code>.env.example</code> has <code>HOLD_TTL_SECONDS=300</code>, <code>MAX_SEATS_PER_USER=4</code>, <code>LONE_SEAT_RULE=false</code>, <code>SWEEPER_ENABLED=true</code>, and the postgres defaults. Compose interpolates <code>${HOLD_TTL_SECONDS:-300}</code> the same way for the cap. Boot: parse env, connect, advisory lock, migrate, seed, unlock, listen, then the sweeper interval. The API reads process environment only. It does not load a dotenv file.</p>
+<p>Layout: <code>backend/src</code> holds <code>config/env.ts</code>, <code>db/</code>, <code>sql/001_init.sql</code>, <code>seats/seat-id.ts</code>, <code>holds/create-hold.ts</code> (the only inserter), <code>best-available.ts</code>, <code>lone-seat.ts</code>, <code>checkout/</code>, <code>admin/</code>, <code>sweeper/</code>, controllers. <code>backend/package.json</code> scripts are <code>build</code>, <code>start</code>, and <code>test</code>. <code>frontend/src</code> holds <code>api.ts</code>, <code>fan.tsx</code>, pages, <code>SeatMap</code>, <code>Countdown</code>. <code>frontend/package.json</code> scripts are <code>dev</code>, <code>build</code>, and <code>preview</code>. DECISIONS is short: modules and the hold flow, tables and why, how double-selling and expiry work, assumptions, stack, what you would change before launch, the 100,000-fan answer, the three-copies answer. Do not paste this spec into it. README covers how to install and run each folder, the one Compose command, the test command, env vars, how fans are identified, and the gaps: no real payment, the username is a bearer token, polling will not carry 100,000 clients.</p>
+
+<h2>9. Tests and build order</h2>
+<p>Jest and Supertest against the real Nest app and <code>seatrush_test</code>. Each test truncates <code>order_seats, orders, promo_redemptions, hold_seats, holds, user_event_locks, seats, zones, events, users</code> with <code>RESTART IDENTITY CASCADE</code>, then arranges through HTTP. The only SQL fixture is moving <code>expires_at</code>. <code>Promise.all</code>, never a loop of awaits, for the concurrent cases. Timeout 30 seconds.</p>
+<table>
+  <thead><tr><th>Test</th><th>Pass when</th></tr></thead>
+  <tbody>
+    <tr><td>All or nothing</td><td>A holds A1. B requests A1 and A2. 409 names A1. B has no hold. A2 is free. A1 is still A's.</td></tr>
+    <tr><td>Cap</td><td>Four seats succeed, a fifth fails and is not held. After release, a hold works. After buying one, four more fail and three succeed. Eight parallel one-seat requests, same fan, cap 4: exactly four 201s, four <code>LIMIT_EXCEEDED</code>.</td></tr>
+    <tr><td>One winner</td><td>Forty fans, <code>Promise.all</code>, all request B7. One 201. Thirty-nine conflicts naming B7. One hold row, one hold_seats row. Invariant query empty. Repeat inside the test. A flake means the lock is wrong.</td></tr>
+    <tr><td>Drop, expiry, release</td><td>Future drop: map 200, hold 409. Expiry moved into the past: checkout 409, map available, another fan can hold. Owner release frees the seat and the cap. Other fan 403. Second release 200.</td></tr>
+    <tr><td>Best available</td><td>Buy all of A and B4-B5 through the API. Count 2 returns B2 and B3, and they are held. A fragmented room is 409 and writes nothing.</td></tr>
+    <tr><td>Checkout</td><td>Owner gets an order whose total is the zone prices. Second call returns the same id. Other fan 403. A later hold of those seats is 409. Replay still works after <code>expires_at</code> is moved, because the order exists.</td></tr>
+    <tr><td>Pure</td><td>Labels 0-A, 25-Z, 26-AA, parse <code>b7</code>. Ranking of the worked row. Discount 34935 with 10% is 3494, total 31441. Five agorot at 10% rounds half up to 1.</td></tr>
+  </tbody>
+</table>
+<p>Stop at the end of each phase. Do not start the next one on a red suite.</p>
+<ol>
+  <li>Compose, health, web title.</li>
+  <li>Migration, advisory lock, schema, demo seed. Second boot does not insert another event.</li>
+  <li>Events and map, derived status, error filter, Swagger. A hand-inserted expired hold already shows as available.</li>
+  <li>Hold transaction: all-or-nothing, both cap tests, forty fans.</li>
+  <li>Release and expiry, sweeper off.</li>
+  <li>Best available, including B2-B3 over HTTP.</li>
+  <li>Checkout, including replay after expiry of an already created order.</li>
+  <li>Screens, two windows, one contested seat, countdown to zero.</li>
+  <li>README, DECISIONS, AI_LOG. Fresh clone in another folder: one command up, test command exits 0.</li>
+  <li>Only then: lone seats, promos, admin screen.</li>
+</ol>
+<p>The one test command is <code>docker compose --profile test run --rm --build test</code>.</p>
+
+<h2>10. Scale, launch, extra credit</h2>
+<p><strong>100,000 fans in the first minute.</strong> The map read breaks first: that many browsers polling the whole room is on the order of 50,000 queries a second. Writes fail second, and they fail closed. Best available all locks row A first, requests hit the 2 second lock timeout or the write pool, and the fan is told to retry. Commits still take the seat lock, so nobody is double-booked. The launch change is a waiting room and a push of seat deltas. Not this build.</p>
+<p><strong>Three API copies.</strong> The protection holds. The seat mutex, the cap mutex, the unique order, and the clock are all in PostgreSQL. No sticky sessions. Three sweepers skip via the advisory lock. Three boots share the migration lock, so the demo event is inserted once. Three copies do not fix the poll storm.</p>
+<p><strong>Before a real launch, do not build now.</strong> Real sessions and an authenticated admin. A payment that sells the seat only when payment commits under the same lock. A waiting room. Push instead of polling. Managed Postgres and backups. An audit log. Rate limits shared across copies. The username header is an impersonation path; the README says so.</p>
+<h2>11. Cancel, coupons, OneSeatMode, delete fan</h2>
+<p>These behaviors are part of the running app. The default HTTP test of best available still returns B2-B3, because OneSeatMode is off unless the request or the env flag turns it on.</p>
+<p><strong>Cancel.</strong> After Hold these seats, each live hold card shows Checkout and, beside it, Cancel. Cancel is <code>POST /holds/:id/release</code> with the fan header. 200 frees every seat whose pointer is still this hold and sets the hold <code>released</code>. The page reloads the map so those seats are available and the card is gone. A second cancel by the owner is 200 and does not move seats again. Another fan gets 403 <code>This hold belongs to another fan.</code> An expired hold is 409 and the rows stay as they are. The confirm step does not hide Cancel.</p>
+<p><strong>Coupons.</strong> The hold card has one text field, Coupon code. The page previews with the same integer math the server uses. Empty or whitespace means no discount. <code>SAVE10</code> (any case) discount is <code>Math.floor((subtotal * 10 + 50) / 100)</code>, then subtract, and the total is never below 0. <code>WELCOME20</code> discount is <code>min(2000, subtotal)</code>, which is 20 shekels. 34935 with SAVE10 is discount 3494, total 31441. Any other non-empty code is unknown.</p>
+<p>Checkout reads an existing order first and returns it with <code>alreadyExisted: true</code> and the original totals. A new promo on a replay is ignored. Only when there is no order does it price the code. Unknown is 409 <code>PROMO_INVALID</code> with <code>That coupon code isn't valid.</code> and the transaction rolls back, so the hold stays live. WELCOME20 is inserted into <code>promo_redemptions</code> (code, user_id, order_id) after the order row exists, inside the same transaction. The primary key is the once-per-fan guard across events, because the user lock is per event. A second WELCOME20 is 409 <code>PROMO_USED</code> with <code>WELCOME20 can only be used once.</code> A unique violation on <code>promo_redemptions_pkey</code> is that same 409, not the order-replay path. Only <code>orders_hold_id_key</code> maps to a replay. SAVE10 is not stored in <code>promo_redemptions</code> and may be used on later orders. The client shows the server message and leaves the hold card up.</p>
+<p><strong>OneSeatMode.</strong> A button labeled <code>OneSeatMode</code> on the event page toggles the rule for this tab. The choice is <code>sessionStorage</code> key <code>oneSeatMode</code> (<code>1</code> or <code>0</code>). When it is on, hold and best-available bodies include <code>oneSeatMode: true</code>. When it is off, the field is omitted. <code>LONE_SEAT_RULE=true</code> forces the rule for every request. A request cannot turn a forced rule off. Default env is false, so omitted field means the rule is off and B2-B3 stays the answer.</p>
+<p>A seat is lone when it is free and both neighbors are taken, or one neighbor is taken and the other side is the end of the row. Judge the row after the requested seats are treated as taken. Reject only a lone seat that was not already lone before this hold. Seats that were already lone do not reject an unrelated hold. On the worked row (8 seats, A full, B4 and B5 sold, N = 2) every pair in B creates a new lone seat, so best available with the rule on returns C4-C5. With the rule on, lock every seat in each touched row, in <code>(row_index, seat_number)</code> order, before judging, so the picture cannot change under the check. Sentence, with no extra prefix: <code>That choice would leave a single empty seat stuck on its own. Pick different seats.</code> Code <code>LONE_SEAT</code>, status 409, and no hold row. Best available skips those blocks inside <code>chooseBlock</code>. If the locked picture disagrees, that probe rolls back to its savepoint and tries again, the same way a taken seat does.</p>
+<p><strong>Create show. Build this.</strong> <code>/admin</code> opens with a form, then the fan list. No login. Create show calls <code>POST /events</code>. Fields are name, tickets go on sale, show starts, rows, seats per row, and zones. The page sends the show name as <code>venue</code>, because that column is still required. A zone has a name, from row, to row, and a price typed in shekels with at most two decimal places, such as <code>150.00</code>. The page converts that text to integer agorot (<code>150.00</code> is <code>15000</code>) and sends <code>priceAgorot</code>. It does not multiply a float. Add zone appends a blank row. Remove is hidden when only one zone remains. Rows are a rectangle: every row has <code>seatsPerRow</code> seats, row A is nearest the stage, and the zones must cover A through the last row exactly once. The drop must be before the show. The API's 400 sentence is shown as written. 201 shows the name, seat count, each zone with its rows and <code>ILS</code> price, and a link to <code>/events/:id</code>. The new show is then on <code>GET /events</code>.</p>
+<p><strong>Remove show.</strong> Each row on the admin show list has Remove show. That arms Confirm remove and Keep. Confirm remove calls <code>DELETE /admin/events/:id</code>. In one write transaction: lock the event, clear seat hold pointers, then delete <code>promo_redemptions</code> for its orders, <code>order_seats</code>, <code>orders</code>, <code>hold_seats</code>, <code>holds</code>, <code>seats</code>, <code>user_event_locks</code>, <code>zones</code>, and the event. Fans stay. Other shows stay. A missing id is 404 <code>We couldn't find that event.</code></p>
+<p><strong>Delete fan.</strong> <code>/admin</code> lists fans from <code>GET /admin/users</code>, newest <code>created_at</code> first. There is no password, matching event creation. A fan row exists only after a hold. Delete User arms a confirm step; Confirm delete calls <code>DELETE /admin/users/:username</code>. Keep aborts. In one write transaction: lock the user, set seats whose <code>current_hold_id</code> is one of that fan's holds back to <code>available</code> with a null pointer, set seats sold on that fan's orders back to <code>available</code>, then delete <code>promo_redemptions</code>, <code>order_seats</code>, <code>orders</code>, <code>hold_seats</code>, <code>holds</code>, <code>user_event_locks</code>, and the user. Events and other fans stay. A missing username is 404 <code>We couldn't find that fan.</code> and deletes nothing. On 200, before the next paint of the name gate: remove that username from <code>localStorage</code> key <code>seatrush.recent</code>, and if <code>sessionStorage</code> key <code>fan</code> is that username, delete the key so the header no longer shows it. The next open of <code>/</code> fetches <code>GET /admin/users</code> again. The deleted name is absent from the chips, the name field, and the header, including after a refresh and after the browser or the containers restart. Do not keep a client list of names that can outlive the <code>users</code> table.</p>
+<div class="callout"><strong>Done.</strong> A fresh clone starts with one command and Demo Night is on sale. Two windows can be two fans. One of them gets B7. The other reads a sentence that names B7. A lapsed hold cannot be bought, and the seat is free without restarting a worker. Best available on the brief's fixture returns B2-B3. The forty-fan test is in the one test command.</div>
+
+</body>
+</html>

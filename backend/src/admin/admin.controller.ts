@@ -19,4 +19,11 @@ export class AdminController {
   deleteUser(@Param('username') username: string) {
     return this.admin.deleteUser(username);
   }
+
+  @Delete('events/:id')
+  @HttpCode(200)
+  @ApiOkResponse({ description: 'Deletes the show and its seats, holds, and orders.' })
+  deleteEvent(@Param('id') id: string) {
+    return this.admin.deleteEvent(id);
+  }
 }

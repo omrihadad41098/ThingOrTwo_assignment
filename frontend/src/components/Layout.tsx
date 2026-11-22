@@ -11,7 +11,7 @@ export function Layout() {
           SeatRush
         </Link>
         <nav>
-          {fan ? <NavLink to="/events">Shows</NavLink> : null}
+          <NavLink to="/events">Shows</NavLink>
           {fan ? <NavLink to="/tickets">My tickets</NavLink> : null}
           <NavLink to="/admin">Admin</NavLink>
         </nav>

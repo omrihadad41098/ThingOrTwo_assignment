@@ -1,3 +1,9 @@
+export function shekelsToAgorot(raw: string): number | null {
+  const match = /^(\d{1,8})(?:\.(\d{1,2}))?$/.exec(raw.trim());
+  if (!match) return null;
+  return Number(match[1]) * 100 + Number((match[2] ?? '0').padEnd(2, '0'));
+}
+
 export function formatAgorot(agorot: number): string {
   const value = Math.trunc(agorot);
   const sign = value < 0 ? '-' : '';
